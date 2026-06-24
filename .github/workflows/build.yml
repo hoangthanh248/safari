@@ -1,0 +1,212 @@
+name: Build SafariBrowser
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:        # Cho phép trigger thủ công từ Actions tab
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Permissions
+# ─────────────────────────────────────────────────────────────────────────────
+permissions:
+  contents: write           # Cần để tạo GitHub Release
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment variables dùng chung
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  JAVA_VERSION: '17'
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Xmx4g"
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 1: Build Debug APK (luôn chạy, không cần keystore)
+  # ───────────────────────────────────────────────────────────────────────────
+  build-debug:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@v2
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # Cache Gradle dependencies + build cache
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 2: Build Release APK (chỉ chạy trên push tag v* hoặc main/master)
+  #         Cần KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
+  #         được set trong GitHub Secrets.
+  # ───────────────────────────────────────────────────────────────────────────
+  build-release:
+    name: Build & Sign Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Chỉ build release khi push lên main/master hoặc tag v*
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/master' ||
+       startsWith(github.ref, 'refs/tags/v'))
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@v2
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Decode keystore từ Base64 secret → file tạm
+      - name: Decode keystore
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/release.keystore
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
+
+      # Build unsigned nếu không có keystore
+      - name: Build Release APK (unsigned fallback)
+        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      # Build + sign nếu có keystore
+      - name: Build & Sign Release APK
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          APK_SRC="app/build/outputs/apk/release/app-release.apk"
+          APK_UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          # Pick whichever exists
+          if [ -f "$APK_SRC" ]; then
+            cp "$APK_SRC" "SafariBrowser-${VERSION}.apk"
+          elif [ -f "$APK_UNSIGNED" ]; then
+            cp "$APK_UNSIGNED" "SafariBrowser-${VERSION}-unsigned.apk"
+          fi
+
+      - name: Upload Release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-release-${{ github.ref_name }}
+          path: SafariBrowser-*.apk
+          retention-days: 30
+
+      # ── Create GitHub Release on tag push ──────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SafariBrowser-*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 3: Lint check (chạy song song với build-debug)
+  # ───────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Run Lint
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Upload Lint report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          retention-days: 7

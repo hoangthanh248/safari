@@ -1,0 +1,38 @@
+# Android build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Build directories
+build/
+app/build/
+
+# Gradle
+.gradle/
+local.properties
+
+# Keystore files — NEVER commit
+*.jks
+*.keystore
+*.p12
+keystore/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Lint
+lint/
+
+# Test results
+app/src/test/
+app/src/androidTest/
+
+# Kotlin Incremental
+kotlin/
+
+# AAR
+*.aar
