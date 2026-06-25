@@ -185,6 +185,11 @@ class BrowserViewModel : ViewModel() {
         } catch (e: Exception) { url }
     }
 
+    fun clearHistory() {
+        _state.update { it.copy(history = emptyList()) }
+    }
+
     val activeTab: BrowserTab?
         get() = state.value.tabs.getOrNull(state.value.activeTabIndex)
 }
+// extension added in patch

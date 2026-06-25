@@ -23,7 +23,8 @@ import com.example.safari.ui.theme.*
 // ── Screen State ──────────────────────────────────────────────────────────────
 
 enum class BrowserOverlay {
-    None, Search, Tabs, Bookmarks, ContextMenu, Customize, Private
+    None, Search, Tabs, Bookmarks, History, ContextMenu, Customize, Private,
+    Share, AddToHomeScreen, Highlights, Extensions
 }
 
 // ── Main Browser Screen ───────────────────────────────────────────────────────

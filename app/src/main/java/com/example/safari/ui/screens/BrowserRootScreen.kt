@@ -165,7 +165,10 @@ fun BrowserRootScreen(
                 onNewTab = { viewModel.handleNavigation(NavigationEvent.NewTab(false)); overlay = BrowserOverlay.None },
                 onNewPrivateTab = { viewModel.handleNavigation(NavigationEvent.NewTab(true)); overlay = BrowserOverlay.None },
                 onBookmarks = { overlay = BrowserOverlay.Bookmarks },
-                onAllTabs = { overlay = BrowserOverlay.Tabs }
+                onAllTabs = { overlay = BrowserOverlay.Tabs },
+                onShare = { overlay = BrowserOverlay.Share },
+                onHistory = { overlay = BrowserOverlay.History },
+                onExtensions = { overlay = BrowserOverlay.Extensions }
             )
         }
 
@@ -204,6 +207,86 @@ fun BrowserRootScreen(
                 modifier = Modifier.fillMaxSize()
             )
         }
+
+        // ── Share Sheet ────────────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = overlay == BrowserOverlay.Share,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it }
+        ) {
+            ShareSheet(
+                backdrop = backdrop,
+                pageTitle = state.title.ifEmpty { state.displayUrl },
+                pageUrl = state.displayUrl,
+                onDismiss = { overlay = BrowserOverlay.None },
+                onCopy = { overlay = BrowserOverlay.None },
+                onAddToFavorites = { viewModel.addBookmark(state.currentUrl, state.title); overlay = BrowserOverlay.None },
+                onAddToReadingList = { overlay = BrowserOverlay.None },
+                onAddBookmark = { viewModel.addBookmark(state.currentUrl, state.title); overlay = BrowserOverlay.None },
+                onAddToHomeScreen = { overlay = BrowserOverlay.AddToHomeScreen },
+                onFindOnPage = { overlay = BrowserOverlay.None },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // ── Add to Home Screen ─────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = overlay == BrowserOverlay.AddToHomeScreen,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it }
+        ) {
+            AddToHomeScreenSheet(
+                backdrop = backdrop,
+                pageTitle = state.title.ifEmpty { state.displayUrl },
+                pageUrl = state.currentUrl,
+                onAdd = { overlay = BrowserOverlay.None },
+                onDismiss = { overlay = BrowserOverlay.None },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // ── Highlights Sheet ───────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = overlay == BrowserOverlay.Highlights,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it }
+        ) {
+            HighlightsSheet(
+                backdrop = backdrop,
+                onNotNow = { overlay = BrowserOverlay.None },
+                onTurnOn = { overlay = BrowserOverlay.None },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // ── Browse Extensions ──────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = overlay == BrowserOverlay.Extensions,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it }
+        ) {
+            BrowseExtensionsSheet(
+                backdrop = backdrop,
+                onClose = { overlay = BrowserOverlay.None },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // ── History ────────────────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible = overlay == BrowserOverlay.History,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it }
+        ) {
+            HistoryScreen(
+                backdrop = backdrop,
+                history = state.history,
+                onClose = { overlay = BrowserOverlay.None },
+                onItemClick = { item -> viewModel.loadUrl(item.url); overlay = BrowserOverlay.None },
+                onClearHistory = { viewModel.clearHistory() },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
 
@@ -218,7 +301,10 @@ fun GlassContextMenuOverlay(
     onNewTab: () -> Unit,
     onNewPrivateTab: () -> Unit,
     onBookmarks: () -> Unit,
-    onAllTabs: () -> Unit
+    onAllTabs: () -> Unit,
+    onShare: () -> Unit = {},
+    onHistory: () -> Unit = {},
+    onExtensions: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -238,36 +324,94 @@ fun GlassContextMenuOverlay(
                 .padding(horizontal = 8.dp)
                 .padding(bottom = 80.dp)
         ) {
-            GlassContextMenuRow(
-                text = "+ New Tab",
+            // Share
+            GlassContextMenuIconRow(
+                icon = com.example.safari.ui.components.CupertinoIcons.Share,
+                text = "Share",
+                isDark = isPrivateMode,
+                onClick = { onShare(); onDismiss() }
+            )
+            GlassContextMenuDivider(isDark = isPrivateMode)
+            // Add to Favorites
+            GlassContextMenuIconRow(
+                icon = com.example.safari.ui.components.CupertinoIcons.Star,
+                text = "Add to Favorites",
+                isDark = isPrivateMode,
+                onClick = { onDismiss() }
+            )
+            GlassContextMenuDivider(isDark = isPrivateMode)
+            // Add Bookmark
+            GlassContextMenuIconRow(
+                icon = com.example.safari.ui.components.CupertinoIcons.Bookmark,
+                text = "Add Bookmark to...",
+                isDark = isPrivateMode,
+                onClick = { onDismiss() }
+            )
+            GlassContextMenuDivider(isDark = isPrivateMode)
+            // New Tab
+            GlassContextMenuIconRow(
+                icon = com.example.safari.ui.components.CupertinoIcons.Plus,
+                text = "New Tab",
                 isDark = isPrivateMode,
                 onClick = { onNewTab(); onDismiss() }
             )
             GlassContextMenuDivider(isDark = isPrivateMode)
-            GlassContextMenuRow(
-                text = "✋ New Private Tab",
+            // New Private Tab
+            GlassContextMenuIconRow(
+                icon = com.example.safari.ui.components.CupertinoIcons.Hand,
+                text = "New Private Tab",
                 isDark = isPrivateMode,
                 onClick = { onNewPrivateTab(); onDismiss() }
             )
             GlassContextMenuDivider(isDark = isPrivateMode)
+
+            // Bottom row: Bookmarks | All Tabs
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 GlassBottomContextButton(
+                    icon = com.example.safari.ui.components.CupertinoIcons.Bookmark,
                     label = "Bookmarks",
                     isDark = isPrivateMode,
                     onClick = { onBookmarks(); onDismiss() }
                 )
                 GlassBottomContextButton(
+                    icon = com.example.safari.ui.components.CupertinoIcons.Tabs,
                     label = "All Tabs",
                     isDark = isPrivateMode,
                     onClick = { onAllTabs(); onDismiss() }
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun GlassContextMenuIconRow(
+    icon: com.example.safari.ui.components.CupertinoIcons,
+    text: String,
+    isDark: Boolean,
+    onClick: () -> Unit
+) {
+    val textColor = if (isDark) IOSColors.labelDark else IOSColors.label
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        com.example.safari.ui.components.CupertinoIcon(
+            icon = icon, tint = textColor, size = 20.dp, strokeWidth = 1.8f
+        )
+        androidx.compose.foundation.text.BasicText(
+            text,
+            style = IOSTypography.body.copy(color = textColor)
+        )
     }
 }
 
@@ -298,16 +442,24 @@ private fun GlassContextMenuDivider(isDark: Boolean) {
 }
 
 @Composable
-private fun GlassBottomContextButton(label: String, isDark: Boolean, onClick: () -> Unit) {
+private fun GlassBottomContextButton(
+    icon: com.example.safari.ui.components.CupertinoIcons,
+    label: String,
+    isDark: Boolean,
+    onClick: () -> Unit
+) {
+    val tint = if (isDark) IOSColors.labelDark else IOSColors.label
     Column(
         modifier = Modifier
             .clickable(onClick = onClick)
-            .padding(IOSSpacing.sm),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        com.example.safari.ui.components.CupertinoIcon(icon = icon, tint = tint, size = 22.dp)
         androidx.compose.foundation.text.BasicText(
             label,
-            style = IOSTypography.callout.copy(color = if (isDark) IOSColors.labelDark else IOSColors.label)
+            style = IOSTypography.caption1.copy(color = tint)
         )
     }
 }
