@@ -19,17 +19,19 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.safari.ui.components.*
+import com.example.safari.ui.components.CupertinoIcon
+import com.example.safari.ui.components.CupertinoIcons
 import com.example.safari.ui.components.glass.*
 import com.example.safari.ui.theme.*
 import com.kyant.backdrop.Backdrop
 
-// ── Start Page Toolbar (no page loaded) ──────────────────────────────────────
+// ── Start Page Toolbar ────────────────────────────────────────────────────────
 
 @Composable
 fun SafariGlassToolbar(
@@ -47,74 +49,64 @@ fun SafariGlassToolbar(
     modifier: Modifier = Modifier
 ) {
     var searchText by remember { mutableStateOf("") }
-    var isFocused by remember { mutableStateOf(false) }
+    var isFocused  by remember { mutableStateOf(false) }
+    val iconColor  = if (isPrivateMode) IOSColors.labelDark else IOSColors.label
 
     LaunchedEffect(displayUrl) {
         if (!isFocused) searchText = displayUrl
     }
 
-    val iconColor = if (isPrivateMode) IOSColors.labelDark else IOSColors.label
-
+    // FIX: LiquidGlassToolbar now takes BoxScope → put Row inside
     LiquidGlassToolbar(
         backdrop = backdrop,
-        isDark = isPrivateMode,
+        isDark   = isPrivateMode,
         modifier = modifier
     ) {
-        // ── Progress bar overlay ──────────────────────────────────────────────
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (isLoading && progress in 0.01f..0.99f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .height(2.dp)
-                        .background(IOSColors.iosBlue)
-                        .align(Alignment.TopStart)
-                )
-            }
-            Row(
+        // Progress bar
+        if (isLoading && progress in 0.01f..0.99f) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = IOSSpacing.sm, vertical = IOSSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(IOSSpacing.sm)
-            ) {
-                // Back button
-                GlassIconButton(
-                    icon = CupertinoIcons.ArrowLeft,
-                    tint = if (canGoBack) iconColor else iconColor.copy(0.3f),
-                    backdrop = backdrop,
-                    isDark = isPrivateMode,
-                    onClick = { if (canGoBack) onBack() }
-                )
-
-                // Glass search bar
-                GlassSearchField(
-                    backdrop = backdrop,
-                    text = searchText,
-                    isFocused = isFocused,
-                    displayUrl = displayUrl,
-                    isPrivateMode = isPrivateMode,
-                    modifier = Modifier.weight(1f),
-                    onTextChange = { searchText = it },
-                    onFocusChange = { focused ->
-                        isFocused = focused
-                        if (focused) {
-                            searchText = currentUrl
-                            onSearchFocus()
-                        }
-                    },
-                    onSubmit = { onSearch(searchText); isFocused = false }
-                )
-
-                // More button
-                GlassIconButton(
-                    icon = CupertinoIcons.Ellipsis,
-                    tint = iconColor,
-                    backdrop = backdrop,
-                    isDark = isPrivateMode,
-                    onClick = onMore
-                )
-            }
+                    .fillMaxWidth(progress)
+                    .height(2.dp)
+                    .background(IOSColors.iosBlue)
+                    .align(Alignment.TopStart)
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = IOSSpacing.sm, vertical = IOSSpacing.sm),
+            verticalAlignment    = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(IOSSpacing.sm)
+        ) {
+            GlassIconButton(
+                icon    = CupertinoIcons.ArrowLeft,
+                tint    = if (canGoBack) iconColor else iconColor.copy(0.3f),
+                backdrop = backdrop,
+                isDark  = isPrivateMode,
+                onClick = { if (canGoBack) onBack() }
+            )
+            GlassSearchField(
+                backdrop      = backdrop,
+                text          = searchText,
+                isFocused     = isFocused,
+                displayUrl    = displayUrl,
+                isPrivateMode = isPrivateMode,
+                modifier      = Modifier.weight(1f),
+                onTextChange  = { searchText = it },
+                onFocusChange = { focused ->
+                    isFocused = focused
+                    if (focused) { searchText = currentUrl; onSearchFocus() }
+                },
+                onSubmit = { onSearch(searchText); isFocused = false }
+            )
+            GlassIconButton(
+                icon    = CupertinoIcons.Ellipsis,
+                tint    = iconColor,
+                backdrop = backdrop,
+                isDark  = isPrivateMode,
+                onClick = onMore
+            )
         }
     }
 }
@@ -142,63 +134,54 @@ fun BrowsingGlassToolbar(
 
     LiquidGlassToolbar(
         backdrop = backdrop,
-        isDark = isPrivateMode,
+        isDark   = isPrivateMode,
         modifier = modifier
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Progress bar
-            if (isLoading && progress in 0.01f..0.99f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .height(2.dp)
-                        .background(IOSColors.iosBlue)
-                        .align(Alignment.TopStart)
-                )
-            }
-            Row(
+        // Progress bar
+        if (isLoading && progress in 0.01f..0.99f) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Back
-                GlassIconButton(
-                    icon = CupertinoIcons.ArrowLeft,
-                    tint = if (canGoBack) iconColor else iconColor.copy(0.3f),
-                    backdrop = backdrop,
-                    isDark = isPrivateMode,
-                    onClick = { if (canGoBack) onBack() }
-                )
-
-                // Address pill with glass
-                GlassAddressPill(
-                    backdrop = backdrop,
-                    displayUrl = displayUrl,
-                    isLoading = isLoading,
-                    isPrivateMode = isPrivateMode,
-                    modifier = Modifier.weight(1f),
-                    onClick = onUrlClick
-                )
-
-                // Tab count
-                GlassTabCountButton(
-                    count = tabCount,
-                    backdrop = backdrop,
-                    isPrivate = isPrivateMode,
-                    onClick = onTabs
-                )
-
-                // More
-                GlassIconButton(
-                    icon = CupertinoIcons.Ellipsis,
-                    tint = iconColor,
-                    backdrop = backdrop,
-                    isDark = isPrivateMode,
-                    onClick = onMore
-                )
-            }
+                    .fillMaxWidth(progress)
+                    .height(2.dp)
+                    .background(IOSColors.iosBlue)
+                    .align(Alignment.TopStart)
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment    = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            GlassIconButton(
+                icon    = CupertinoIcons.ArrowLeft,
+                tint    = if (canGoBack) iconColor else iconColor.copy(0.3f),
+                backdrop = backdrop,
+                isDark  = isPrivateMode,
+                onClick = { if (canGoBack) onBack() }
+            )
+            GlassAddressPill(
+                backdrop      = backdrop,
+                displayUrl    = displayUrl,
+                isLoading     = isLoading,
+                isPrivateMode = isPrivateMode,
+                modifier      = Modifier.weight(1f),
+                onClick       = onUrlClick
+            )
+            GlassTabCountButton(
+                count    = tabCount,
+                backdrop = backdrop,
+                isPrivate = isPrivateMode,
+                onClick  = onTabs
+            )
+            GlassIconButton(
+                icon    = CupertinoIcons.Ellipsis,
+                tint    = iconColor,
+                backdrop = backdrop,
+                isDark  = isPrivateMode,
+                onClick = onMore
+            )
         }
     }
 }
@@ -217,21 +200,20 @@ fun GlassIconButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.87f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessHigh),
-        label = "glass_icon_scale"
+        targetValue    = if (isPressed) 0.87f else 1f,
+        animationSpec  = spring(stiffness = Spring.StiffnessHigh),
+        label          = "icon_scale"
     )
-
     LiquidGlassButton(
         backdrop = backdrop,
-        isDark = isDark,
+        isDark   = isDark,
         modifier = modifier
             .size(36.dp)
             .scale(scale)
             .clickable(
                 interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
+                indication        = null,
+                onClick           = onClick
             )
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -255,20 +237,18 @@ private fun GlassSearchField(
     onSubmit: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
-    val textColor = if (isPrivateMode) IOSColors.labelDark else IOSColors.label
-    val hintColor = if (isPrivateMode) IOSColors.secondaryLabelDark else IOSColors.secondaryLabel
+    val textColor  = if (isPrivateMode) IOSColors.labelDark else IOSColors.label
+    val hintColor  = if (isPrivateMode) IOSColors.secondaryLabelDark else IOSColors.secondaryLabel
 
     GlassSearchBar(
         backdrop = backdrop,
-        isDark = isPrivateMode,
+        isDark   = isPrivateMode,
         modifier = modifier
             .height(36.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                if (!isFocused) focusRequester.requestFocus()
-            }
+                indication        = null
+            ) { if (!isFocused) focusRequester.requestFocus() }
     ) {
         Row(
             modifier = Modifier
@@ -282,24 +262,24 @@ private fun GlassSearchField(
             }
             if (isFocused) {
                 BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    modifier = Modifier
+                    value          = text,
+                    onValueChange  = onTextChange,
+                    modifier       = Modifier
                         .weight(1f)
                         .focusRequester(focusRequester)
                         .onFocusChanged { onFocusChange(it.isFocused) },
-                    singleLine = true,
-                    textStyle = IOSTypography.subheadline.copy(color = textColor),
-                    cursorBrush = SolidColor(IOSColors.iosBlue),
+                    singleLine     = true,
+                    textStyle      = IOSTypography.subheadline.copy(color = textColor),
+                    cursorBrush    = SolidColor(IOSColors.iosBlue),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { onSubmit() })
                 )
             } else {
                 BasicText(
-                    text = displayUrl.ifEmpty { "Search or enter website name" },
+                    text     = displayUrl.ifEmpty { "Search or enter website name" },
                     modifier = Modifier.weight(1f),
-                    style = IOSTypography.subheadline.copy(
-                        color = if (displayUrl.isEmpty()) hintColor else textColor,
+                    style    = IOSTypography.subheadline.copy(
+                        color     = if (displayUrl.isEmpty()) hintColor else textColor,
                         textAlign = TextAlign.Center
                     ),
                     maxLines = 1,
@@ -327,13 +307,13 @@ private fun GlassAddressPill(
 
     GlassSearchBar(
         backdrop = backdrop,
-        isDark = isPrivateMode,
+        isDark   = isPrivateMode,
         modifier = modifier
             .height(36.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
+                indication        = null,
+                onClick           = onClick
             )
     ) {
         Row(
@@ -342,18 +322,13 @@ private fun GlassAddressPill(
             horizontalArrangement = Arrangement.Center
         ) {
             if (!isLoading) {
-                CupertinoIcon(
-                    CupertinoIcons.Lock,
-                    tint = hintColor,
-                    size = 11.dp,
-                    strokeWidth = 1.8f
-                )
+                CupertinoIcon(CupertinoIcons.Lock, tint = hintColor, size = 11.dp, strokeWidth = 1.8f)
                 Spacer(Modifier.width(4.dp))
             }
             BasicText(
-                text = displayUrl.ifEmpty { "Search or enter website name" },
-                style = IOSTypography.subheadline.copy(
-                    color = if (displayUrl.isEmpty()) hintColor else textColor,
+                text     = displayUrl.ifEmpty { "Search or enter website name" },
+                style    = IOSTypography.subheadline.copy(
+                    color     = if (displayUrl.isEmpty()) hintColor else textColor,
                     textAlign = TextAlign.Center
                 ),
                 maxLines = 1,
@@ -375,28 +350,23 @@ private fun GlassTabCountButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.87f else 1f,
+        targetValue   = if (isPressed) 0.87f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessHigh),
-        label = "tab_count_scale"
+        label         = "tab_scale"
     )
-
     LiquidGlassButton(
         backdrop = backdrop,
-        isDark = isPrivate,
+        isDark   = isPrivate,
         modifier = Modifier
             .size(36.dp)
             .scale(scale)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             BasicText(
-                text = count.toString(),
+                text  = count.coerceAtLeast(1).toString(),
                 style = IOSTypography.footnote.copy(
-                    color = if (isPrivate) IOSColors.labelDark else IOSColors.label,
+                    color     = if (isPrivate) IOSColors.labelDark else IOSColors.label,
                     textAlign = TextAlign.Center
                 )
             )

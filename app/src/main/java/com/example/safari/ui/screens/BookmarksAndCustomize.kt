@@ -409,13 +409,13 @@ private fun ToggleRow(label: String, icon: CupertinoIcons, value: Boolean, onTog
     ) {
         CupertinoIcon(icon, tint = IOSColors.label, size = 22.dp, strokeWidth = 1.8f)
         BasicText(label, modifier = Modifier.weight(1f), style = IOSTypography.body.copy(color = IOSColors.label))
-        IOSToggle(checked = value, onCheckedChange = onToggle)
+        BookmarkToggle(checked = value, onCheckedChange = onToggle)
         CupertinoIcon(CupertinoIcons.List, tint = IOSColors.tertiaryLabel, size = 18.dp)
     }
 }
 
 @Composable
-private fun IOSToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun BookmarkToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     val trackColor by animateColorAsState(
         targetValue = if (checked) IOSColors.systemGreen else Color(0xFFE5E5EA),
         animationSpec = tween(200),

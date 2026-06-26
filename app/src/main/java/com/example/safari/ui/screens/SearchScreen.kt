@@ -127,11 +127,16 @@ fun SearchScreen(
                             singleLine = true,
                             textStyle = IOSTypography.body.copy(color = textColor),
                             cursorBrush = SolidColor(IOSColors.iosBlue),
-                            decorationBox = { inner ->
-                                if (searchText.isEmpty()) {
-                                    BasicText("Search or enter website name", style = IOSTypography.body.copy(color = IOSColors.secondaryLabel))
+                            decorationBox = @Composable { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (searchText.isEmpty()) {
+                                        BasicText(
+                                            "Search or enter website name",
+                                            style = IOSTypography.body.copy(color = IOSColors.secondaryLabel)
+                                        )
+                                    }
+                                    innerTextField()
                                 }
-                                inner()
                             },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { onSearch(searchText) })

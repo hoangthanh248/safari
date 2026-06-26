@@ -2,29 +2,30 @@ name: Build SafariBrowser
 
 on:
   push:
-    branches: [ main, master, develop ]
-    tags:
-      - 'v*'
+    branches: [main, master, develop]
+    tags: ['v*']
   pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:        # Cho phép trigger thủ công từ Actions tab
+    branches: [main, master]
+  workflow_dispatch:
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Permissions
-# ─────────────────────────────────────────────────────────────────────────────
 permissions:
-  contents: write           # Cần để tạo GitHub Release
+  contents: write
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Environment variables dùng chung
-# ─────────────────────────────────────────────────────────────────────────────
 env:
   JAVA_VERSION: '17'
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Xmx4g"
+  GRADLE_OPTS: >-
+    -Dorg.gradle.daemon=false
+    -Dorg.gradle.workers.max=2
+    -Dorg.gradle.caching=true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reusable step group via composite — shared between jobs
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
+
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 1: Build Debug APK (luôn chạy, không cần keystore)
+  # Job 1 — Build debug APK (every push / PR)
   # ───────────────────────────────────────────────────────────────────────────
   build-debug:
     name: Build Debug APK
@@ -32,38 +33,34 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
+          distribution: temurin
           cache: gradle
 
-      - name: Validate Gradle wrapper
-        uses: gradle/wrapper-validation-action@v2
+      - uses: gradle/actions/wrapper-validation@v3
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      # Cache Gradle dependencies + build cache
-      - name: Cache Gradle packages
+      - name: Cache Gradle & build outputs
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
             .gradle
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+            app/build/intermediates
+          key: gradle-debug-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml','**/gradle-wrapper.properties') }}
+          restore-keys: gradle-debug-${{ runner.os }}-
+
+      - run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Debug APK artifact
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: safari-debug-${{ github.sha }}
@@ -71,15 +68,20 @@ jobs:
           retention-days: 7
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 2: Build Release APK (chỉ chạy trên push tag v* hoặc main/master)
-  #         Cần KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
-  #         được set trong GitHub Secrets.
+  # Job 2 — Build release APK, signed (main / master / tags only)
+  #
+  # Keystore strategy (in order of priority):
+  #   A. Use KEYSTORE_BASE64 secret if provided by the repo owner (recommended
+  #      for production) — decode → sign.
+  #   B. Auto-generate a self-signed keystore on the fly when the secret is
+  #      absent — useful for forks or first-time setup. The generated keystore
+  #      is discarded after the run; the APK is signed but NOT suitable for
+  #      Play Store submission.
   # ───────────────────────────────────────────────────────────────────────────
   build-release:
     name: Build & Sign Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Chỉ build release khi push lên main/master hoặc tag v*
     if: |
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
@@ -87,74 +89,130 @@ jobs:
        startsWith(github.ref, 'refs/tags/v'))
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
+          distribution: temurin
           cache: gradle
 
-      - name: Validate Gradle wrapper
-        uses: gradle/wrapper-validation-action@v2
+      - uses: gradle/actions/wrapper-validation@v3
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Cache Gradle packages
+      - name: Cache Gradle & build outputs
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
             .gradle
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+            app/build/intermediates
+          key: gradle-release-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml','**/gradle-wrapper.properties') }}
+          restore-keys: gradle-release-${{ runner.os }}-
 
-      # Decode keystore từ Base64 secret → file tạm
-      - name: Decode keystore
+      - run: chmod +x gradlew
+
+      # ── Strategy A: decode existing keystore from secret ───────────────────
+      - name: "[Strategy A] Decode keystore from secret"
+        id: keystore_secret
         if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > $RUNNER_TEMP/release.keystore
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
+          KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          # Verify it's a valid JKS/BKS file (keytool exits non-zero on error)
+          keytool -list -keystore "$KEYSTORE_PATH" \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -noprompt || { echo "::error::Keystore invalid or wrong password"; exit 1; }
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH"       >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"                 >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"           >> "$GITHUB_ENV"
+          echo "strategy=secret"                    >> "$GITHUB_OUTPUT"
 
-      # Build unsigned nếu không có keystore
-      - name: Build Release APK (unsigned fallback)
+      # ── Strategy B: auto-generate a self-signed keystore ──────────────────
+      - name: "[Strategy B] Auto-generate self-signed keystore"
+        id: keystore_auto
         if: ${{ secrets.KEYSTORE_BASE64 == '' }}
-        run: ./gradlew assembleRelease --stacktrace
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/auto-release.keystore"
+          AUTO_PASSWORD="$(openssl rand -base64 18 | tr -d '=+/' | head -c 20)"
+          AUTO_ALIAS="safari-auto-key"
 
-      # Build + sign nếu có keystore
+          echo "Generating self-signed keystore (strategy B) ..."
+          keytool -genkey -v \
+            -keystore  "$KEYSTORE_PATH" \
+            -alias     "$AUTO_ALIAS" \
+            -keyalg    RSA \
+            -keysize   4096 \
+            -validity  10000 \
+            -storepass "$AUTO_PASSWORD" \
+            -keypass   "$AUTO_PASSWORD" \
+            -dname     "CN=SafariBrowser CI, OU=GitHub Actions, O=Self-Signed, L=CI, S=CI, C=US" \
+            -noprompt
+
+          echo "Keystore generated: $(du -sh "$KEYSTORE_PATH")"
+
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH"   >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$AUTO_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=$AUTO_ALIAS"           >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$AUTO_PASSWORD"     >> "$GITHUB_ENV"
+          echo "strategy=auto"                  >> "$GITHUB_OUTPUT"
+
+      # ── Annotate which strategy was used ──────────────────────────────────
+      - name: Report signing strategy
+        run: |
+          if [ "${{ steps.keystore_secret.outputs.strategy }}" = "secret" ]; then
+            echo "::notice::🔐 Signed with keystore from KEYSTORE_BASE64 secret (Strategy A)"
+          else
+            echo "::warning::⚠️  Signed with AUTO-GENERATED keystore (Strategy B). Not suitable for Play Store."
+          fi
+
+      # ── Build & sign ───────────────────────────────────────────────────────
       - name: Build & Sign Release APK
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         env:
-          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PATH:     ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_ALIAS:         ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD:      ${{ env.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Rename APK with version
+      # ── Verify signature ───────────────────────────────────────────────────
+      - name: Verify APK signature
+        run: |
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::No APK found in release output"
+            exit 1
+          fi
+          echo "Verifying: $APK"
+          # apksigner is in the Android Build-Tools
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK" && echo "✅ Signature valid"
+
+      # ── Rename APK ─────────────────────────────────────────────────────────
+      - name: Rename APK
+        id: rename
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
-          APK_SRC="app/build/outputs/apk/release/app-release.apk"
-          APK_UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          # Pick whichever exists
-          if [ -f "$APK_SRC" ]; then
-            cp "$APK_SRC" "SafariBrowser-${VERSION}.apk"
-          elif [ -f "$APK_UNSIGNED" ]; then
-            cp "$APK_UNSIGNED" "SafariBrowser-${VERSION}-unsigned.apk"
-          fi
+          STRATEGY="${{ steps.keystore_secret.outputs.strategy || 'auto' }}"
+          SUFFIX=""
+          [ "$STRATEGY" = "auto" ] && SUFFIX="-self-signed"
+
+          APK_OUT="SafariBrowser-${VERSION}${SUFFIX}.apk"
+          APK_SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+
+          cp "$APK_SRC" "$APK_OUT"
+          echo "apk_name=$APK_OUT" >> "$GITHUB_OUTPUT"
+          echo "APK ready: $(du -sh "$APK_OUT")"
 
       - name: Upload Release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: safari-release-${{ github.ref_name }}
-          path: SafariBrowser-*.apk
+          path: ${{ steps.rename.outputs.apk_name }}
           retention-days: 30
 
       # ── Create GitHub Release on tag push ──────────────────────────────────
@@ -162,51 +220,63 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: SafariBrowser-*.apk
+          files: ${{ steps.rename.outputs.apk_name }}
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+          body: |
+            ## SafariBrowser ${{ github.ref_name }}
+
+            > **Signing**: ${{ steps.keystore_secret.outputs.strategy == 'secret' && '🔐 Signed with production keystore' || '⚠️ Signed with auto-generated keystore (not for Play Store)' }}
+
+            ### Install
+            Download the APK below and enable "Install from unknown sources" on your device.
+
+            ### Requirements
+            - Android 12+ (API 31+)
+            - Hardware acceleration enabled
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 3: Lint check (chạy song song với build-debug)
+  # Job 3 — Lint
   # ───────────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Run on PRs and pushes, but not blocked by release job
+    if: always()
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
+          distribution: temurin
           cache: gradle
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - uses: gradle/actions/wrapper-validation@v3
 
-      - name: Cache Gradle packages
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
             .gradle
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          key: gradle-lint-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml') }}
+          restore-keys: gradle-lint-${{ runner.os }}-
 
-      - name: Run Lint
+      - run: chmod +x gradlew
+
+      - name: Run Android Lint
         run: ./gradlew lintDebug --stacktrace
 
-      - name: Upload Lint report
+      - name: Upload Lint HTML report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: lint-report
+          name: lint-report-${{ github.sha }}
           path: app/build/reports/lint-results-debug.html
-          retention-days: 7
+          retention-days: 14

@@ -2,15 +2,22 @@ package com.example.safari.browser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.os.Handler
+import android.os.Looper
+import android.webkit.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
-// ── WebView Composable ────────────────────────────────────────────────────────
+// All WebView callbacks fire on the main thread in AOSP, but some OEM ROMs
+// dispatch onProgressChanged from a binder thread. We post everything to main
+// explicitly to be safe and avoid "Only the original thread that created a view
+// hierarchy can touch its views." crashes.
+private val mainHandler = Handler(Looper.getMainLooper())
+private inline fun onMain(crossinline block: () -> Unit) {
+    if (Looper.myLooper() == Looper.getMainLooper()) block()
+    else mainHandler.post { block() }
+}
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -19,105 +26,123 @@ fun SafariWebView(
     viewModel: BrowserViewModel,
     modifier: Modifier = Modifier
 ) {
-    var webView by remember { mutableStateOf<WebView?>(null) }
+    // Keep a stable reference so DisposableEffect fires only when the WebView
+    // instance itself changes, not on every recomposition.
+    val webViewRef = remember { mutableStateOf<WebView?>(null) }
 
-    // Wire up ViewModel callbacks to actual WebView calls
-    DisposableEffect(webView) {
-        val wv = webView ?: return@DisposableEffect onDispose {}
-        viewModel.onLoadUrl = { u -> wv.loadUrl(u) }
-        viewModel.onGoBack = { if (wv.canGoBack()) wv.goBack() }
-        viewModel.onGoForward = { if (wv.canGoForward()) wv.goForward() }
-        viewModel.onReload = { wv.reload() }
-        viewModel.onStop = { wv.stopLoading() }
+    // Wire ViewModel ↔ WebView bridge
+    DisposableEffect(webViewRef.value) {
+        val wv = webViewRef.value ?: return@DisposableEffect onDispose {}
+        viewModel.onLoadUrl   = { u -> onMain { wv.loadUrl(u) } }
+        viewModel.onGoBack    = { onMain { if (wv.canGoBack()) wv.goBack() } }
+        viewModel.onGoForward = { onMain { if (wv.canGoForward()) wv.goForward() } }
+        viewModel.onReload    = { onMain { wv.reload() } }
+        viewModel.onStop      = { onMain { wv.stopLoading() } }
         onDispose {
-            viewModel.onLoadUrl = null
-            viewModel.onGoBack = null
+            viewModel.onLoadUrl   = null
+            viewModel.onGoBack    = null
             viewModel.onGoForward = null
-            viewModel.onReload = null
-            viewModel.onStop = null
-        }
-    }
-
-    // Load URL when it changes externally
-    LaunchedEffect(url) {
-        if (url.isNotEmpty()) {
-            webView?.loadUrl(url)
+            viewModel.onReload    = null
+            viewModel.onStop      = null
         }
     }
 
     AndroidView(
         factory = { context ->
-            WebView(context).apply {
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    loadWithOverviewMode = true
-                    useWideViewPort = true
+            WebView(context).also { wv ->
+                wv.settings.apply {
+                    javaScriptEnabled        = true
+                    domStorageEnabled        = true
+                    loadWithOverviewMode     = true
+                    useWideViewPort          = true
                     setSupportZoom(true)
-                    builtInZoomControls = true
-                    displayZoomControls = false
-                    allowFileAccess = true
-                    databaseEnabled = true
-                    cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                    mediaPlaybackRequiresUserGesture = false
-                    mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    builtInZoomControls      = true
+                    displayZoomControls      = false
+                    allowFileAccess          = false          // security: no file:// access
+                    databaseEnabled          = true
+                    cacheMode                = WebSettings.LOAD_DEFAULT
+                    mediaPlaybackRequiresUserGesture = true  // security: don't autoplay
+                    mixedContentMode         = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    @Suppress("DEPRECATION")
+                    saveFormData             = false         // privacy
                 }
 
-                webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                wv.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
-                        viewModel.onPageStarted(url)
-                        viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                        if (!url.isNullOrEmpty()) {
+                            onMain {
+                                viewModel.onPageStarted(url)
+                                viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                            }
+                        }
                     }
 
-                    override fun onPageFinished(view: WebView, url: String) {
+                    override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
-                        viewModel.onPageFinished(url, view.title ?: "")
-                        viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                        if (!url.isNullOrEmpty()) {
+                            onMain {
+                                viewModel.onPageFinished(url, view.title ?: "")
+                                viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                            }
+                        }
                     }
 
+                    // Never override loading — let WebView handle all navigation
                     override fun shouldOverrideUrlLoading(
                         view: WebView,
                         request: WebResourceRequest
-                    ): Boolean {
-                        return false // Let WebView handle all navigation
+                    ): Boolean = false
+
+                    override fun onReceivedError(
+                        view: WebView,
+                        request: WebResourceRequest,
+                        error: WebResourceError
+                    ) {
+                        // Only surface main-frame errors to avoid noise from sub-resources
+                        if (request.isForMainFrame) {
+                            onMain {
+                                viewModel.onPageFinished(
+                                    request.url?.toString() ?: "",
+                                    "Error loading page"
+                                )
+                            }
+                        }
                     }
                 }
 
-                webChromeClient = object : WebChromeClient() {
+                wv.webChromeClient = object : WebChromeClient() {
                     override fun onProgressChanged(view: WebView, newProgress: Int) {
-                        viewModel.onProgressChanged(newProgress)
+                        onMain { viewModel.onProgressChanged(newProgress) }
                     }
-
-                    override fun onReceivedTitle(view: WebView, title: String) {
-                        viewModel.onReceivedTitle(title)
-                        viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                    override fun onReceivedTitle(view: WebView, title: String?) {
+                        if (!title.isNullOrEmpty()) {
+                            onMain {
+                                viewModel.onReceivedTitle(title)
+                                viewModel.onBackForwardStateChanged(view.canGoBack(), view.canGoForward())
+                            }
+                        }
                     }
                 }
 
-                webView = this
+                // Register instance
+                webViewRef.value = wv
 
-                // Load initial URL
-                if (url.isNotEmpty()) {
-                    loadUrl(url)
-                }
+                // Load initial URL if provided
+                if (url.isNotEmpty()) wv.loadUrl(url)
             }
         },
         update = { wv ->
-            webView = wv
+            // AndroidView calls update() on every recomposition if the factory
+            // already ran. Do NOT call loadUrl() here — the ViewModel bridge
+            // handles URL changes via onLoadUrl callback.
+            if (webViewRef.value !== wv) webViewRef.value = wv
+        },
+        onRelease = { wv ->
+            // Prevent WebView from leaking when the composable leaves composition
+            wv.stopLoading()
+            wv.destroy()
         },
         modifier = modifier
     )
-}
-
-// ── WebView State holder (prevent recreation) ─────────────────────────────────
-
-class WebViewState {
-    var webView: WebView? = null
-    var lastUrl: String = ""
-}
-
-@Composable
-fun rememberWebViewState(): WebViewState {
-    return remember { WebViewState() }
 }
