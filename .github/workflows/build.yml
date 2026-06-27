@@ -18,15 +18,11 @@ env:
     -Dorg.gradle.workers.max=2
     -Dorg.gradle.caching=true
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Reusable step group via composite — shared between jobs
-# ─────────────────────────────────────────────────────────────────────────────
-
 jobs:
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Job 1 — Build debug APK (every push / PR)
-  # ───────────────────────────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1 — Build Debug APK (every push / PR)
+  # ─────────────────────────────────────────────────────────────────────────────
   build-debug:
     name: Build Debug APK
     runs-on: ubuntu-latest
@@ -44,7 +40,7 @@ jobs:
 
       - uses: gradle/actions/wrapper-validation@v3
 
-      - name: Cache Gradle & build outputs
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
@@ -67,17 +63,25 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # Job 2 — Build release APK, signed (main / master / tags only)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2 — Build & Sign Release APK (main / master / tags only)
   #
-  # Keystore strategy (in order of priority):
-  #   A. Use KEYSTORE_BASE64 secret if provided by the repo owner (recommended
-  #      for production) — decode → sign.
-  #   B. Auto-generate a self-signed keystore on the fly when the secret is
-  #      absent — useful for forks or first-time setup. The generated keystore
-  #      is discarded after the run; the APK is signed but NOT suitable for
-  #      Play Store submission.
-  # ───────────────────────────────────────────────────────────────────────────
+  # Keystore strategy — decided at runtime in shell, NOT in step if: conditions.
+  # The secrets context is NOT available in step-level if: expressions; it is
+  # only available inside env: blocks and run: scripts. Both strategies are
+  # handled by a single "Setup keystore" step using shell branching.
+  #
+  #   Strategy A — production keystore via repository secrets (recommended):
+  #     KEYSTORE_BASE64     base64-encoded .jks/.keystore file
+  #     KEYSTORE_PASSWORD   store password
+  #     KEY_ALIAS           alias inside the keystore
+  #     KEY_PASSWORD        key password
+  #
+  #   Strategy B — auto-generated self-signed keystore (zero config):
+  #     When KEYSTORE_BASE64 is absent/empty the step generates a fresh RSA-4096
+  #     keystore, signs the APK, and discards the keystore after the run.
+  #     The APK installs on any device but is NOT accepted by Google Play.
+  # ─────────────────────────────────────────────────────────────────────────────
   build-release:
     name: Build & Sign Release APK
     runs-on: ubuntu-latest
@@ -100,7 +104,7 @@ jobs:
 
       - uses: gradle/actions/wrapper-validation@v3
 
-      - name: Cache Gradle & build outputs
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
@@ -113,99 +117,92 @@ jobs:
 
       - run: chmod +x gradlew
 
-      # ── Strategy A: decode existing keystore from secret ───────────────────
-      - name: "[Strategy A] Decode keystore from secret"
-        id: keystore_secret
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      # ── Keystore setup (Strategy A or B chosen at runtime in shell) ───────────
+      # IMPORTANT: secrets.* are passed via env: only — never used in if: conditions.
+      - name: Setup keystore
+        id: keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_KEYSTORE_BASE64:   ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SECRET_KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+          SECRET_KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
         run: |
-          KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          # Verify it's a valid JKS/BKS file (keytool exits non-zero on error)
-          keytool -list -keystore "$KEYSTORE_PATH" \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -noprompt || { echo "::error::Keystore invalid or wrong password"; exit 1; }
-          echo "KEYSTORE_PATH=$KEYSTORE_PATH"       >> "$GITHUB_ENV"
-          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"                 >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"           >> "$GITHUB_ENV"
-          echo "strategy=secret"                    >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      # ── Strategy B: auto-generate a self-signed keystore ──────────────────
-      - name: "[Strategy B] Auto-generate self-signed keystore"
-        id: keystore_auto
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
-        run: |
-          KEYSTORE_PATH="$RUNNER_TEMP/auto-release.keystore"
-          AUTO_PASSWORD="$(openssl rand -base64 18 | tr -d '=+/' | head -c 20)"
-          AUTO_ALIAS="safari-auto-key"
+          if [ -n "${SECRET_KEYSTORE_BASE64:-}" ]; then
+            # ── Strategy A: decode keystore from repository secret ─────────
+            echo "::notice::Strategy A — keystore from KEYSTORE_BASE64 secret"
+            KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
 
-          echo "Generating self-signed keystore (strategy B) ..."
-          keytool -genkey -v \
-            -keystore  "$KEYSTORE_PATH" \
-            -alias     "$AUTO_ALIAS" \
-            -keyalg    RSA \
-            -keysize   4096 \
-            -validity  10000 \
-            -storepass "$AUTO_PASSWORD" \
-            -keypass   "$AUTO_PASSWORD" \
-            -dname     "CN=SafariBrowser CI, OU=GitHub Actions, O=Self-Signed, L=CI, S=CI, C=US" \
-            -noprompt
+            echo "$SECRET_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
 
-          echo "Keystore generated: $(du -sh "$KEYSTORE_PATH")"
+            keytool -list \
+              -keystore  "$KEYSTORE_PATH" \
+              -storepass "$SECRET_KEYSTORE_PASSWORD" \
+              -noprompt \
+              || { echo "::error::Keystore verification failed — wrong KEYSTORE_PASSWORD?"; exit 1; }
 
-          echo "KEYSTORE_PATH=$KEYSTORE_PATH"   >> "$GITHUB_ENV"
-          echo "KEYSTORE_PASSWORD=$AUTO_PASSWORD" >> "$GITHUB_ENV"
-          echo "KEY_ALIAS=$AUTO_ALIAS"           >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=$AUTO_PASSWORD"     >> "$GITHUB_ENV"
-          echo "strategy=auto"                  >> "$GITHUB_OUTPUT"
+            echo "KEYSTORE_PATH=$KEYSTORE_PATH"                >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$SECRET_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$SECRET_KEY_ALIAS"                 >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$SECRET_KEY_PASSWORD"           >> "$GITHUB_ENV"
+            echo "strategy=secret"                             >> "$GITHUB_OUTPUT"
 
-      # ── Annotate which strategy was used ──────────────────────────────────
-      - name: Report signing strategy
-        run: |
-          if [ "${{ steps.keystore_secret.outputs.strategy }}" = "secret" ]; then
-            echo "::notice::🔐 Signed with keystore from KEYSTORE_BASE64 secret (Strategy A)"
           else
-            echo "::warning::⚠️  Signed with AUTO-GENERATED keystore (Strategy B). Not suitable for Play Store."
+            # ── Strategy B: generate a self-signed keystore on the fly ─────
+            echo "::warning::Strategy B — KEYSTORE_BASE64 not set. Auto-generating keystore. APK will NOT pass Play Store review."
+            KEYSTORE_PATH="$RUNNER_TEMP/auto-release.keystore"
+            AUTO_PASS="$(openssl rand -hex 12)"
+            AUTO_ALIAS="safari-auto-key"
+
+            keytool -genkey -v \
+              -keystore  "$KEYSTORE_PATH" \
+              -alias     "$AUTO_ALIAS" \
+              -keyalg    RSA \
+              -keysize   4096 \
+              -validity  10000 \
+              -storepass "$AUTO_PASS" \
+              -keypass   "$AUTO_PASS" \
+              -dname     "CN=SafariBrowser CI, OU=GitHub Actions, O=Auto-Generated, L=CI, S=CI, C=US" \
+              -noprompt
+
+            echo "Keystore size: $(du -sh "$KEYSTORE_PATH")"
+
+            echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$AUTO_PASS" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$AUTO_ALIAS"        >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$AUTO_PASS"      >> "$GITHUB_ENV"
+            echo "strategy=auto"                >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Build & sign ───────────────────────────────────────────────────────
+      # ── Build Release APK ─────────────────────────────────────────────────────
       - name: Build & Sign Release APK
-        env:
-          KEYSTORE_PATH:     ${{ env.KEYSTORE_PATH }}
-          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
-          KEY_ALIAS:         ${{ env.KEY_ALIAS }}
-          KEY_PASSWORD:      ${{ env.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
-      # ── Verify signature ───────────────────────────────────────────────────
+      # ── Verify APK signature ──────────────────────────────────────────────────
       - name: Verify APK signature
         run: |
           APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          if [ -z "$APK" ]; then
-            echo "::error::No APK found in release output"
-            exit 1
-          fi
-          echo "Verifying: $APK"
-          # apksigner is in the Android Build-Tools
-          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
-          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK" && echo "✅ Signature valid"
+          [ -z "$APK" ] && { echo "::error::No APK found in release output"; exit 1; }
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools/"* | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          echo "Signature OK: $APK"
 
-      # ── Rename APK ─────────────────────────────────────────────────────────
+      # ── Rename APK ────────────────────────────────────────────────────────────
       - name: Rename APK
         id: rename
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
-          STRATEGY="${{ steps.keystore_secret.outputs.strategy || 'auto' }}"
+          STRATEGY="${{ steps.keystore.outputs.strategy }}"
           SUFFIX=""
           [ "$STRATEGY" = "auto" ] && SUFFIX="-self-signed"
 
-          APK_OUT="SafariBrowser-${VERSION}${SUFFIX}.apk"
           APK_SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-
+          APK_OUT="SafariBrowser-${VERSION}${SUFFIX}.apk"
           cp "$APK_SRC" "$APK_OUT"
-          echo "apk_name=$APK_OUT" >> "$GITHUB_OUTPUT"
+
+          echo "apk_name=$APK_OUT"   >> "$GITHUB_OUTPUT"
+          echo "strategy=$STRATEGY"  >> "$GITHUB_OUTPUT"
           echo "APK ready: $(du -sh "$APK_OUT")"
 
       - name: Upload Release APK artifact
@@ -215,7 +212,7 @@ jobs:
           path: ${{ steps.rename.outputs.apk_name }}
           retention-days: 30
 
-      # ── Create GitHub Release on tag push ──────────────────────────────────
+      # ── Create GitHub Release on tag push ─────────────────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -224,27 +221,14 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
-          body: |
-            ## SafariBrowser ${{ github.ref_name }}
 
-            > **Signing**: ${{ steps.keystore_secret.outputs.strategy == 'secret' && '🔐 Signed with production keystore' || '⚠️ Signed with auto-generated keystore (not for Play Store)' }}
-
-            ### Install
-            Download the APK below and enable "Install from unknown sources" on your device.
-
-            ### Requirements
-            - Android 12+ (API 31+)
-            - Hardware acceleration enabled
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Job 3 — Lint
-  # ───────────────────────────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3 — Lint (every push and PR)
+  # ─────────────────────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Run on PRs and pushes, but not blocked by release job
-    if: always()
 
     steps:
       - uses: actions/checkout@v4
