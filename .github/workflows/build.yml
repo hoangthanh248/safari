@@ -56,27 +56,29 @@ jobs:
           # ── 1. Parse Gradle version from wrapper properties ───────────────
           PROPS="gradle/wrapper/gradle-wrapper.properties"
           DIST_URL=$(grep -E '^distributionUrl=' "$PROPS" | cut -d'=' -f2- | tr -d '\r')
-          # e.g. https\://services.gradle.org/distributions/gradle-8.9-bin.zip
+          # e.g. https\://services.gradle.org/distributions/gradle-8.7-bin.zip
           DIST_URL="${DIST_URL//\\:/:}"   # unescape \: → :
           GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
           echo "Detected Gradle version: $GRADLE_VERSION"
 
-          # ── 2. Download official gradlew script ──────────────────────────
-          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
-          echo "Downloading gradlew from $GRADLEW_URL"
-          curl -fsSL "$GRADLEW_URL" -o gradlew
-          chmod +x gradlew
-
-          # ── 3. Download gradle-wrapper.jar from the distribution zip ─────
+          # ── 2+3. Download distribution zip — extract both gradlew and jar ─
+          # Single source of truth: services.gradle.org (no GitHub tag naming issues)
           ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           echo "Downloading distribution from $ZIP_URL"
-          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          TMP_DIR="$(mktemp -d)"
+          TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
 
+          # Extract gradlew script
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          cp "$TMP_DIR/gradlew" gradlew
+          chmod +x gradlew
+
+          # Extract gradle-wrapper.jar (path changed between Gradle versions)
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
           unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
             || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
-          # Rename whatever jar was extracted to the canonical name
+          # Rename to canonical filename (jar may include version suffix)
           find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
             | head -1 | xargs -I{} mv {} "$JAR_PATH"
 
@@ -153,15 +155,15 @@ jobs:
           GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
           echo "Detected Gradle version: $GRADLE_VERSION"
 
-          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
-          echo "Downloading gradlew from $GRADLEW_URL"
-          curl -fsSL "$GRADLEW_URL" -o gradlew
-          chmod +x gradlew
-
           ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           echo "Downloading distribution from $ZIP_URL"
-          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          TMP_DIR="$(mktemp -d)"
+          TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          cp "$TMP_DIR/gradlew" gradlew
+          chmod +x gradlew
 
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
           unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
@@ -315,15 +317,15 @@ jobs:
           GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
           echo "Detected Gradle version: $GRADLE_VERSION"
 
-          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
-          echo "Downloading gradlew from $GRADLEW_URL"
-          curl -fsSL "$GRADLEW_URL" -o gradlew
-          chmod +x gradlew
-
           ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           echo "Downloading distribution from $ZIP_URL"
-          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          TMP_DIR="$(mktemp -d)"
+          TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          cp "$TMP_DIR/gradlew" gradlew
+          chmod +x gradlew
 
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
           unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
