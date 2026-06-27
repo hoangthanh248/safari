@@ -62,25 +62,29 @@ jobs:
           echo "Detected Gradle version: $GRADLE_VERSION"
 
           # ── 2+3. Download distribution zip — extract both gradlew and jar ─
-          # Single source of truth: services.gradle.org (no GitHub tag naming issues)
           ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           echo "Downloading distribution from $ZIP_URL"
           TMP_DIR="$(mktemp -d)"
           TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
 
-          # Extract gradlew script
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          # Find exact paths inside zip (avoids hardcoded subfolder assumptions)
+          GRADLEW_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E '^gradle-[^/]+/gradlew$' | head -1)
+          JAR_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E 'gradle-wrapper(-[0-9.]+)?\.jar$' | head -1)
+          echo "Found gradlew entry : $GRADLEW_ENTRY"
+          echo "Found wrapper jar   : $JAR_ENTRY"
+
+          # Extract gradlew
+          unzip -j "$TMP_ZIP" "$GRADLEW_ENTRY" -d "$TMP_DIR"
           cp "$TMP_DIR/gradlew" gradlew
           chmod +x gradlew
 
-          # Extract gradle-wrapper.jar (path changed between Gradle versions)
+          # Extract gradle-wrapper.jar
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
-            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
-          # Rename to canonical filename (jar may include version suffix)
-          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
-            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+          unzip -j "$TMP_ZIP" "$JAR_ENTRY" -d "$(dirname "$JAR_PATH")"
+          # Rename to canonical filename if it has a version suffix
+          EXTRACTED_JAR="$(dirname "$JAR_PATH")/$(basename "$JAR_ENTRY")"
+          [ "$EXTRACTED_JAR" != "$JAR_PATH" ] && mv "$EXTRACTED_JAR" "$JAR_PATH"
 
           echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
           ls -lh gradlew "$JAR_PATH"
@@ -161,15 +165,19 @@ jobs:
           TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
 
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          GRADLEW_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E '^gradle-[^/]+/gradlew$' | head -1)
+          JAR_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E 'gradle-wrapper(-[0-9.]+)?\.jar$' | head -1)
+          echo "Found gradlew entry : $GRADLEW_ENTRY"
+          echo "Found wrapper jar   : $JAR_ENTRY"
+
+          unzip -j "$TMP_ZIP" "$GRADLEW_ENTRY" -d "$TMP_DIR"
           cp "$TMP_DIR/gradlew" gradlew
           chmod +x gradlew
 
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
-            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
-          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
-            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+          unzip -j "$TMP_ZIP" "$JAR_ENTRY" -d "$(dirname "$JAR_PATH")"
+          EXTRACTED_JAR="$(dirname "$JAR_PATH")/$(basename "$JAR_ENTRY")"
+          [ "$EXTRACTED_JAR" != "$JAR_PATH" ] && mv "$EXTRACTED_JAR" "$JAR_PATH"
 
           echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
           ls -lh gradlew "$JAR_PATH"
@@ -323,15 +331,19 @@ jobs:
           TMP_ZIP="$TMP_DIR/gradle-dist.zip"
           curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
 
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/gradlew" -d "$TMP_DIR"
+          GRADLEW_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E '^gradle-[^/]+/gradlew$' | head -1)
+          JAR_ENTRY=$(unzip -l "$TMP_ZIP" | awk '{print $4}' | grep -E 'gradle-wrapper(-[0-9.]+)?\.jar$' | head -1)
+          echo "Found gradlew entry : $GRADLEW_ENTRY"
+          echo "Found wrapper jar   : $JAR_ENTRY"
+
+          unzip -j "$TMP_ZIP" "$GRADLEW_ENTRY" -d "$TMP_DIR"
           cp "$TMP_DIR/gradlew" gradlew
           chmod +x gradlew
 
           JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
-          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
-            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
-          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
-            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+          unzip -j "$TMP_ZIP" "$JAR_ENTRY" -d "$(dirname "$JAR_PATH")"
+          EXTRACTED_JAR="$(dirname "$JAR_PATH")/$(basename "$JAR_ENTRY")"
+          [ "$EXTRACTED_JAR" != "$JAR_PATH" ] && mv "$EXTRACTED_JAR" "$JAR_PATH"
 
           echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
           ls -lh gradlew "$JAR_PATH"
