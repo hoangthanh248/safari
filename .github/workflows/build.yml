@@ -38,8 +38,6 @@ jobs:
           distribution: temurin
           cache: gradle
 
-      - uses: gradle/actions/wrapper-validation@v3
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -51,7 +49,39 @@ jobs:
           key: gradle-debug-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml','**/gradle-wrapper.properties') }}
           restore-keys: gradle-debug-${{ runner.os }}-
 
-      - run: chmod +x gradlew
+      - name: Bootstrap Gradle Wrapper
+        run: |
+          set -euo pipefail
+
+          # ── 1. Parse Gradle version from wrapper properties ───────────────
+          PROPS="gradle/wrapper/gradle-wrapper.properties"
+          DIST_URL=$(grep -E '^distributionUrl=' "$PROPS" | cut -d'=' -f2- | tr -d '\r')
+          # e.g. https\://services.gradle.org/distributions/gradle-8.9-bin.zip
+          DIST_URL="${DIST_URL//\\:/:}"   # unescape \: → :
+          GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
+          echo "Detected Gradle version: $GRADLE_VERSION"
+
+          # ── 2. Download official gradlew script ──────────────────────────
+          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
+          echo "Downloading gradlew from $GRADLEW_URL"
+          curl -fsSL "$GRADLEW_URL" -o gradlew
+          chmod +x gradlew
+
+          # ── 3. Download gradle-wrapper.jar from the distribution zip ─────
+          ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          echo "Downloading distribution from $ZIP_URL"
+          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+
+          JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
+            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
+          # Rename whatever jar was extracted to the canonical name
+          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
+            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+
+          echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
+          ls -lh gradlew "$JAR_PATH"
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
@@ -102,8 +132,6 @@ jobs:
           distribution: temurin
           cache: gradle
 
-      - uses: gradle/actions/wrapper-validation@v3
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -115,7 +143,34 @@ jobs:
           key: gradle-release-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml','**/gradle-wrapper.properties') }}
           restore-keys: gradle-release-${{ runner.os }}-
 
-      - run: chmod +x gradlew
+      - name: Bootstrap Gradle Wrapper
+        run: |
+          set -euo pipefail
+
+          PROPS="gradle/wrapper/gradle-wrapper.properties"
+          DIST_URL=$(grep -E '^distributionUrl=' "$PROPS" | cut -d'=' -f2- | tr -d '\r')
+          DIST_URL="${DIST_URL//\\:/:}"
+          GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
+          echo "Detected Gradle version: $GRADLE_VERSION"
+
+          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
+          echo "Downloading gradlew from $GRADLEW_URL"
+          curl -fsSL "$GRADLEW_URL" -o gradlew
+          chmod +x gradlew
+
+          ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          echo "Downloading distribution from $ZIP_URL"
+          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+
+          JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
+            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
+          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
+            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+
+          echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
+          ls -lh gradlew "$JAR_PATH"
 
       # ── Keystore setup (Strategy A or B chosen at runtime in shell) ───────────
       # IMPORTANT: secrets.* are passed via env: only — never used in if: conditions.
@@ -240,8 +295,6 @@ jobs:
           distribution: temurin
           cache: gradle
 
-      - uses: gradle/actions/wrapper-validation@v3
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -252,7 +305,34 @@ jobs:
           key: gradle-lint-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/libs.versions.toml') }}
           restore-keys: gradle-lint-${{ runner.os }}-
 
-      - run: chmod +x gradlew
+      - name: Bootstrap Gradle Wrapper
+        run: |
+          set -euo pipefail
+
+          PROPS="gradle/wrapper/gradle-wrapper.properties"
+          DIST_URL=$(grep -E '^distributionUrl=' "$PROPS" | cut -d'=' -f2- | tr -d '\r')
+          DIST_URL="${DIST_URL//\\:/:}"
+          GRADLE_VERSION=$(echo "$DIST_URL" | grep -oP 'gradle-\K[0-9]+\.[0-9]+(\.[0-9]+)?(?=-)')
+          echo "Detected Gradle version: $GRADLE_VERSION"
+
+          GRADLEW_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradlew"
+          echo "Downloading gradlew from $GRADLEW_URL"
+          curl -fsSL "$GRADLEW_URL" -o gradlew
+          chmod +x gradlew
+
+          ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          echo "Downloading distribution from $ZIP_URL"
+          TMP_ZIP="$(mktemp -d)/gradle-dist.zip"
+          curl -fsSL "$ZIP_URL" -o "$TMP_ZIP"
+
+          JAR_PATH="gradle/wrapper/gradle-wrapper.jar"
+          unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-*.jar" -d "$(dirname "$JAR_PATH")" 2>/dev/null \
+            || unzip -j "$TMP_ZIP" "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-*.jar"   -d "$(dirname "$JAR_PATH")"
+          find "$(dirname "$JAR_PATH")" -maxdepth 1 -name 'gradle-wrapper-*.jar' \
+            | head -1 | xargs -I{} mv {} "$JAR_PATH"
+
+          echo "gradle-wrapper.jar SHA-256: $(sha256sum "$JAR_PATH")"
+          ls -lh gradlew "$JAR_PATH"
 
       - name: Run Android Lint
         run: ./gradlew lintDebug --stacktrace
